@@ -4,18 +4,30 @@ import {
   LayoutChangeEvent,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   View
 } from 'react-native';
 import { StackScreenProps } from '@react-navigation/stack';
+import Svg, { Circle, Line } from 'react-native-svg';
 import { RootStackParamList } from '../navigation';
-import { analyzePosture, BodyKeypoints, Keypoint } from '../utils/postureAnalysis';
+import { analyzePosture, Keypoint } from '../utils/postureAnalysis';
 import { detectPoseLandmarks } from '../utils/poseDetection';
 
 type Props = StackScreenProps<RootStackParamList, 'Result'>;
 
 const POINT_LABELS = ['Left shoulder', 'Right shoulder', 'Neck'] as const;
+const GOOD_COLOR = '#22c55e';
+const BAD_COLOR = '#ef4444';
+const NEUTRAL_COLOR = '#94a3b8';
+
+type Connection = {
+  from: Keypoint;
+  to: Keypoint;
+  color: string;
+  width: number;
+};
 
 export default function ResultScreen({ route }: Props) {
   const { imageUri } = route.params;
@@ -95,29 +107,120 @@ export default function ResultScreen({ route }: Props) {
   }, [detectionStatus, imageSize.height, imageSize.width, imageUri, points.length]);
 
   const scoreColor = !result ? '#94a3b8' : result.score >= 80 ? '#22c55e' : '#ef4444';
+  const leftShoulder = points[0];
+  const rightShoulder = points[1];
+  const neck = points[2];
+  const shoulderMidpoint =
+    leftShoulder && rightShoulder
+      ? {
+          x: (leftShoulder.x + rightShoulder.x) / 2,
+          y: (leftShoulder.y + rightShoulder.y) / 2
+        }
+      : null;
+
+  const overlayData = useMemo(() => {
+    if (!leftShoulder || !rightShoulder || !neck || !shoulderMidpoint) {
+      return { connections: [] as Connection[], neckGood: true, shouldersGood: true };
+    }
+
+    const neckGood = (result?.details.neckAngle ?? 0) <= 10;
+    const shouldersGood = (result?.details.shoulderDiff ?? 0) <= 7;
+
+    const connections: Connection[] = [
+      {
+        from: leftShoulder,
+        to: rightShoulder,
+        color: shouldersGood ? GOOD_COLOR : BAD_COLOR,
+        width: 4
+      },
+      {
+        from: neck,
+        to: shoulderMidpoint,
+        color: neckGood ? GOOD_COLOR : BAD_COLOR,
+        width: 4
+      },
+      {
+        from: neck,
+        to: leftShoulder,
+        color: neckGood && shouldersGood ? GOOD_COLOR : NEUTRAL_COLOR,
+        width: 2
+      },
+      {
+        from: neck,
+        to: rightShoulder,
+        color: neckGood && shouldersGood ? GOOD_COLOR : NEUTRAL_COLOR,
+        width: 2
+      }
+    ];
+
+    return { connections, neckGood, shouldersGood };
+  }, [leftShoulder, neck, result?.details.neckAngle, result?.details.shoulderDiff, rightShoulder, shoulderMidpoint]);
+
+  const postureLossInches = useMemo(() => {
+    if (!result) {
+      return 1.8;
+    }
+
+    const estimatedLoss = 0.6 + result.details.neckAngle * 0.07 + result.details.shoulderDiff * 0.05;
+    return Number(Math.max(0.5, Math.min(3.5, estimatedLoss)).toFixed(1));
+  }, [result]);
+
+  const handleShareScore = async () => {
+    if (!result) {
+      return;
+    }
+
+    try {
+      await Share.share({
+        message: `My FitPose score is ${result.score}/100. I look ${postureLossInches} inches shorter from posture.`
+      });
+    } catch (error) {
+      console.warn('Share failed:', error);
+    }
+  };
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
-      <Text style={styles.instructionTitle}>Tap body keypoints on the photo</Text>
-      <Text style={styles.instructionText}>
-        {points.length < 3
-          ? `Next point: ${POINT_LABELS[points.length]}`
-          : 'All keypoints selected. You can reset and re-tap if needed.'}
-      </Text>
-      <Text style={styles.autoText}>
-        {detectionStatus === 'loading'
-          ? 'Detecting pose with MediaPipe...'
-          : 'Auto-detection is enabled. Tap manually to fine-tune points if needed.'}
-      </Text>
+      <Text style={styles.headline}>Posture Insight</Text>
+      <Text style={styles.subheadline}>AI-powered body alignment analysis</Text>
 
       <Pressable style={styles.imageWrap} onLayout={onImageLayout} onPress={onImageTap}>
         <Image source={{ uri: imageUri }} style={styles.preview} />
 
+        <Svg style={styles.svgOverlay} pointerEvents="none">
+          {overlayData.connections.map((connection, index) => (
+            <Line
+              key={`line-${index}-${connection.from.x}-${connection.to.x}`}
+              x1={connection.from.x}
+              y1={connection.from.y}
+              x2={connection.to.x}
+              y2={connection.to.y}
+              stroke={connection.color}
+              strokeWidth={connection.width}
+              strokeLinecap="round"
+            />
+          ))}
+        </Svg>
+
         {points.map((point, index) => (
-          <View
-            key={`${POINT_LABELS[index]}-${point.x}-${point.y}`}
-            style={[styles.marker, { left: point.x - 8, top: point.y - 8 }]}
-          />
+          <Svg key={`${POINT_LABELS[index]}-${point.x}-${point.y}`} style={styles.svgOverlay} pointerEvents="none">
+            <Circle
+              cx={point.x}
+              cy={point.y}
+              r={8}
+              fill={
+                index === 2
+                  ? overlayData.neckGood
+                    ? GOOD_COLOR
+                    : BAD_COLOR
+                  : overlayData.shouldersGood
+                    ? GOOD_COLOR
+                    : BAD_COLOR
+              }
+              stroke="#052e16"
+              strokeWidth={2}
+            />
+          </Svg>
         ))}
 
         {points.map((point, index) => (
@@ -130,6 +233,50 @@ export default function ResultScreen({ route }: Props) {
         ))}
       </Pressable>
 
+      <View style={styles.scoreCard}>
+        <Text style={styles.scoreLabel}>POSTURE SCORE</Text>
+        <Text style={[styles.scoreValue, { color: scoreColor }]}>{result ? `${result.score} / 100` : '-- / 100'}</Text>
+        <Text style={styles.lossText}>You look {postureLossInches} inches shorter due to posture</Text>
+        <Text style={styles.confidenceText}>Your posture reduces perceived confidence</Text>
+
+        <View style={styles.metricsRow}>
+          <View style={styles.metricPill}>
+            <Text style={styles.metricLabel}>Neck</Text>
+            <Text style={styles.metricValue}>{result ? `${result.details.neckAngle}°` : '--'}</Text>
+          </View>
+          <View style={styles.metricPill}>
+            <Text style={styles.metricLabel}>Shoulders</Text>
+            <Text style={styles.metricValue}>{result ? `${result.details.shoulderDiff}°` : '--'}</Text>
+          </View>
+        </View>
+      </View>
+
+      <View style={styles.feedbackCard}>
+        <Text style={styles.feedbackTitle}>Alignment Feedback</Text>
+        {detectionStatus === 'loading' && <Text style={styles.autoText}>Detecting pose with MediaPipe…</Text>}
+        {!result && detectionStatus !== 'loading' && (
+          <Text style={styles.autoText}>Tap left shoulder, right shoulder, and neck to calibrate overlay.</Text>
+        )}
+        {result?.issues.map((issue) => {
+          const good = issue.toLowerCase().includes('great posture');
+          return (
+            <View key={issue} style={styles.issueRow}>
+              <View style={[styles.dot, { backgroundColor: good ? GOOD_COLOR : BAD_COLOR }]} />
+              <Text style={styles.issueText}>{issue}</Text>
+            </View>
+          );
+        })}
+      </View>
+
+      <View style={styles.actions}>
+        <Pressable style={styles.primaryButton}>
+          <Text style={styles.primaryButtonText}>Improve My Posture</Text>
+        </Pressable>
+        <Pressable style={styles.secondaryButton} onPress={handleShareScore}>
+          <Text style={styles.secondaryButtonText}>Share Your Score</Text>
+        </Pressable>
+      </View>
+
       <View style={styles.controlsRow}>
         <Text style={styles.metaText}>
           Image area: {Math.round(imageSize.width)} × {Math.round(imageSize.height)}
@@ -137,30 +284,6 @@ export default function ResultScreen({ route }: Props) {
         <Pressable style={styles.resetButton} onPress={resetPoints}>
           <Text style={styles.resetText}>Reset points</Text>
         </Pressable>
-      </View>
-
-      <View style={styles.card}>
-        <Text style={styles.scoreLabel}>Posture Score</Text>
-        <Text style={[styles.scoreValue, { color: scoreColor }]}>{result ? result.score : '--'}</Text>
-
-        <Text style={styles.metrics}>
-          Neck angle: {result ? `${result.details.neckAngle}°` : 'Select keypoints first'}
-        </Text>
-        <Text style={styles.metrics}>
-          Shoulder difference: {result ? `${result.details.shoulderDiff}°` : 'Select keypoints first'}
-        </Text>
-
-        <Text style={styles.issuesTitle}>Findings</Text>
-        {!result && <Text style={styles.issueText}>Select left shoulder, right shoulder, and neck.</Text>}
-        {result?.issues.map((issue) => {
-          const good = issue.toLowerCase().includes('great posture');
-          return (
-            <View key={issue} style={styles.issueRow}>
-              <View style={[styles.dot, { backgroundColor: good ? '#22c55e' : '#ef4444' }]} />
-              <Text style={styles.issueText}>{issue}</Text>
-            </View>
-          );
-        })}
       </View>
     </ScrollView>
   );
@@ -173,20 +296,17 @@ const styles = StyleSheet.create({
     padding: 20,
     gap: 12
   },
-  instructionTitle: {
+  headline: {
     color: '#f8fafc',
-    fontWeight: '700',
-    fontSize: 18,
-    alignSelf: 'flex-start'
+    fontWeight: '800',
+    fontSize: 22,
+    letterSpacing: 0.3
   },
-  instructionText: {
-    color: '#cbd5e1',
-    alignSelf: 'flex-start'
-  },
-  autoText: {
+  subheadline: {
     color: '#94a3b8',
-    alignSelf: 'flex-start',
-    fontSize: 12
+    fontSize: 13,
+    marginTop: -4,
+    marginBottom: 4
   },
   imageWrap: {
     width: '100%',
@@ -202,14 +322,8 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%'
   },
-  marker: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    backgroundColor: '#22c55e',
-    borderWidth: 2,
-    borderColor: '#052e16',
-    position: 'absolute'
+  svgOverlay: {
+    ...StyleSheet.absoluteFillObject
   },
   markerLabel: {
     position: 'absolute',
@@ -241,34 +355,87 @@ const styles = StyleSheet.create({
     color: '#e2e8f0',
     fontWeight: '600'
   },
-  card: {
+  scoreCard: {
     width: '100%',
     maxWidth: 360,
     backgroundColor: '#111827',
     borderRadius: 18,
-    padding: 18,
-    gap: 8,
+    paddingVertical: 20,
+    paddingHorizontal: 18,
+    alignItems: 'center',
+    gap: 10,
     borderWidth: 1,
-    borderColor: '#1f2937'
+    borderColor: '#1f2937',
+    shadowColor: '#000',
+    shadowOpacity: 0.45,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 10 }
   },
   scoreLabel: {
-    color: '#94a3b8',
-    fontSize: 14
+    color: '#64748b',
+    fontSize: 12,
+    letterSpacing: 1.6,
+    fontWeight: '700'
   },
   scoreValue: {
-    fontSize: 64,
-    fontWeight: '800',
-    lineHeight: 72
+    fontSize: 62,
+    fontWeight: '900',
+    lineHeight: 68,
+    textAlign: 'center'
   },
-  metrics: {
-    color: '#cbd5e1',
-    fontSize: 15
+  lossText: {
+    color: '#f1f5f9',
+    fontSize: 16,
+    textAlign: 'center',
+    fontWeight: '600'
   },
-  issuesTitle: {
-    marginTop: 8,
+  confidenceText: {
+    color: '#f87171',
+    fontSize: 14,
+    textAlign: 'center'
+  },
+  metricsRow: {
+    width: '100%',
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 4
+  },
+  metricPill: {
+    flex: 1,
+    backgroundColor: '#0b1220',
+    borderColor: '#1f2937',
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 10,
+    alignItems: 'center'
+  },
+  metricLabel: {
+    color: '#94a3b8',
+    fontSize: 12
+  },
+  metricValue: {
+    color: '#f8fafc',
+    fontSize: 18,
+    fontWeight: '700'
+  },
+  feedbackCard: {
+    width: '100%',
+    maxWidth: 360,
+    backgroundColor: '#0f172a',
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#1e293b'
+  },
+  feedbackTitle: {
     color: '#f8fafc',
     fontSize: 16,
-    fontWeight: '700'
+    fontWeight: '700',
+    marginBottom: 8
+  },
+  autoText: {
+    color: '#94a3b8',
+    fontSize: 13
   },
   issueRow: {
     flexDirection: 'row',
@@ -286,5 +453,34 @@ const styles = StyleSheet.create({
     color: '#e2e8f0',
     flex: 1,
     lineHeight: 20
+  },
+  actions: {
+    width: '100%',
+    maxWidth: 360,
+    gap: 10
+  },
+  primaryButton: {
+    backgroundColor: '#22c55e',
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center'
+  },
+  primaryButtonText: {
+    color: '#052e16',
+    fontWeight: '800',
+    fontSize: 16
+  },
+  secondaryButton: {
+    backgroundColor: '#111827',
+    borderRadius: 14,
+    paddingVertical: 13,
+    alignItems: 'center',
+    borderColor: '#334155',
+    borderWidth: 1
+  },
+  secondaryButtonText: {
+    color: '#f8fafc',
+    fontWeight: '700',
+    fontSize: 15
   }
 });
