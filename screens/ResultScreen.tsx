@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { StackScreenProps } from '@react-navigation/stack';
 import { RootStackParamList } from '../navigation';
-import { analyzePosture, Keypoint } from '../utils/postureAnalysis';
+import { analyzePosture, BodyKeypoints, Keypoint } from '../utils/postureAnalysis';
 import { detectPoseLandmarks } from '../utils/poseDetection';
 
 type Props = StackScreenProps<RootStackParamList, 'Result'>;
