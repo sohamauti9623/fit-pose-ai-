@@ -28,13 +28,11 @@ export default function ResultScreen({ route }: Props) {
       return null;
     }
 
-    const keypoints: BodyKeypoints = {
+    return analyzePosture({
       leftShoulder: points[0],
       rightShoulder: points[1],
       neck: points[2]
-    };
-
-    return analyzePosture(keypoints);
+    });
   }, [points]);
 
   const onImageLayout = (event: LayoutChangeEvent) => {
@@ -146,10 +144,10 @@ export default function ResultScreen({ route }: Props) {
         <Text style={[styles.scoreValue, { color: scoreColor }]}>{result ? result.score : '--'}</Text>
 
         <Text style={styles.metrics}>
-          Neck angle: {result ? `${result.neckAngle}°` : 'Select keypoints first'}
+          Neck angle: {result ? `${result.details.neckAngle}°` : 'Select keypoints first'}
         </Text>
         <Text style={styles.metrics}>
-          Shoulder difference: {result ? `${result.shoulderDifference}°` : 'Select keypoints first'}
+          Shoulder difference: {result ? `${result.details.shoulderDiff}°` : 'Select keypoints first'}
         </Text>
 
         <Text style={styles.issuesTitle}>Findings</Text>
