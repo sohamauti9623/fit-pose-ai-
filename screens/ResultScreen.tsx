@@ -165,6 +165,22 @@ export default function ResultScreen({ route }: Props) {
     return Number(Math.max(0.5, Math.min(3.5, estimatedLoss)).toFixed(1));
   }, [result]);
 
+  const psychologicalFeedback = useMemo(() => {
+    if (!result) {
+      return 'Stand tall to unlock a stronger, more confident look.';
+    }
+
+    if (result.score > 85) {
+      return 'Excellent posture. You look confident and strong.';
+    }
+
+    if (result.score >= 60) {
+      return 'Decent posture, but improvements can boost your appearance.';
+    }
+
+    return 'Your posture is affecting how you look. Fixing it will make a big difference.';
+  }, [result]);
+
   const handleShareScore = async () => {
     if (!result) {
       return;
@@ -237,7 +253,7 @@ export default function ResultScreen({ route }: Props) {
         <Text style={styles.scoreLabel}>POSTURE SCORE</Text>
         <Text style={[styles.scoreValue, { color: scoreColor }]}>{result ? `${result.score} / 100` : '-- / 100'}</Text>
         <Text style={styles.lossText}>You look {postureLossInches} inches shorter due to posture</Text>
-        <Text style={styles.confidenceText}>Your posture reduces perceived confidence</Text>
+        <Text style={styles.confidenceText}>{psychologicalFeedback}</Text>
 
         <View style={styles.metricsRow}>
           <View style={styles.metricPill}>
