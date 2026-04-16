@@ -1,0 +1,26 @@
+{
+  "expo": {
+    "name": "FitPose AI",
+    "slug": "fitpose-ai",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "FitPose AI needs camera access to scan your posture."
+      }
+    },
+    "android": {
+      "permissions": [
+        "CAMERA"
+      ]
+    },
+    "plugins": [
+      "expo-camera"
+    ]
+  }
+}
