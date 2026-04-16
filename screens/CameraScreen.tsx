@@ -1,6 +1,6 @@
 import React, { useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
-import { CameraType, CameraView, useCameraPermissions } from 'expo-camera';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import { StackScreenProps } from '@react-navigation/stack';
 import { RootStackParamList } from '../navigation';
 
@@ -51,7 +51,7 @@ export default function CameraScreen({ navigation }: Props) {
 
   return (
     <View style={styles.container}>
-      <CameraView ref={cameraRef} style={styles.camera} facing={CameraType.back}>
+      <CameraView ref={cameraRef} style={styles.camera} facing="back">
         <View style={styles.overlay}>
           <Pressable style={styles.captureButton} onPress={handleCapture}>
             <View style={styles.captureInner} />
