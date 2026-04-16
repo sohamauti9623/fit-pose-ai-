@@ -3,6 +3,13 @@ export type Keypoint = {
   y: number;
 };
 
+export type PoseLikeLandmark = {
+  x: number;
+  y: number;
+  z?: number;
+  visibility?: number;
+};
+
 export type BodyKeypoints = {
   leftShoulder: Keypoint;
   rightShoulder: Keypoint;
@@ -12,13 +19,44 @@ export type BodyKeypoints = {
 export type PostureResult = {
   score: number;
   issues: string[];
-  neckAngle: number;
-  shoulderDifference: number;
+  details: {
+    neckAngle: number;
+    shoulderDiff: number;
+  };
 };
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
 const toDegrees = (radians: number) => (radians * 180) / Math.PI;
+const isLandmarkArray = (input: BodyKeypoints | PoseLikeLandmark[]): input is PoseLikeLandmark[] =>
+  Array.isArray(input);
+
+const toBodyKeypoints = (input: BodyKeypoints | PoseLikeLandmark[]): BodyKeypoints => {
+  if (!isLandmarkArray(input)) {
+    return input;
+  }
+
+  const nose = input[0];
+  const leftShoulder = input[11] ?? input[3];
+  const rightShoulder = input[12] ?? input[4];
+
+  if (nose && leftShoulder && rightShoulder) {
+    return {
+      leftShoulder: { x: leftShoulder.x, y: leftShoulder.y },
+      rightShoulder: { x: rightShoulder.x, y: rightShoulder.y },
+      neck: {
+        x: (leftShoulder.x + rightShoulder.x) / 2,
+        y: (nose.y + leftShoulder.y + rightShoulder.y) / 3
+      }
+    };
+  }
+
+  return {
+    leftShoulder: { x: 0.42, y: 0.46 },
+    rightShoulder: { x: 0.58, y: 0.46 },
+    neck: { x: 0.5, y: 0.38 }
+  };
+};
 
 /**
  * Analyzes posture from real body keypoints (neck + shoulders).
@@ -28,7 +66,8 @@ const toDegrees = (radians: number) => (radians * 180) / Math.PI;
  * shoulderDifference:
  *  - tilt of the shoulder line relative to horizontal
  */
-export function analyzePosture(keypoints: BodyKeypoints): PostureResult {
+export function analyzePosture(input: BodyKeypoints | PoseLikeLandmark[]): PostureResult {
+  const keypoints = toBodyKeypoints(input);
   const shoulderMidX = (keypoints.leftShoulder.x + keypoints.rightShoulder.x) / 2;
   const shoulderMidY = (keypoints.leftShoulder.y + keypoints.rightShoulder.y) / 2;
 
@@ -61,7 +100,9 @@ export function analyzePosture(keypoints: BodyKeypoints): PostureResult {
   return {
     score: clamp(score, 0, 100),
     issues,
-    neckAngle: Number(neckAngle.toFixed(1)),
-    shoulderDifference: Number(shoulderDifference.toFixed(1))
+    details: {
+      neckAngle: Number(neckAngle.toFixed(1)),
+      shoulderDiff: Number(shoulderDifference.toFixed(1))
+    }
   };
 }

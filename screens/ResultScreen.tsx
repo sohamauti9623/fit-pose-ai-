@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Image,
   LayoutChangeEvent,
@@ -10,7 +10,8 @@ import {
 } from 'react-native';
 import { StackScreenProps } from '@react-navigation/stack';
 import { RootStackParamList } from '../navigation';
-import { analyzePosture, BodyKeypoints, Keypoint } from '../utils/postureAnalysis';
+import { analyzePosture, Keypoint } from '../utils/postureAnalysis';
+import { detectPoseLandmarks } from '../utils/poseDetection';
 
 type Props = StackScreenProps<RootStackParamList, 'Result'>;
 
@@ -20,19 +21,18 @@ export default function ResultScreen({ route }: Props) {
   const { imageUri } = route.params;
   const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
   const [points, setPoints] = useState<Keypoint[]>([]);
+  const [detectionStatus, setDetectionStatus] = useState<'idle' | 'loading' | 'done'>('idle');
 
   const result = useMemo(() => {
     if (points.length < 3) {
       return null;
     }
 
-    const keypoints: BodyKeypoints = {
+    return analyzePosture({
       leftShoulder: points[0],
       rightShoulder: points[1],
       neck: points[2]
-    };
-
-    return analyzePosture(keypoints);
+    });
   }, [points]);
 
   const onImageLayout = (event: LayoutChangeEvent) => {
@@ -49,7 +49,50 @@ export default function ResultScreen({ route }: Props) {
     setPoints((prev) => [...prev, { x: locationX, y: locationY }]);
   };
 
-  const resetPoints = () => setPoints([]);
+  const resetPoints = () => {
+    setPoints([]);
+    setDetectionStatus('idle');
+  };
+
+  useEffect(() => {
+    if (!imageSize.width || !imageSize.height || points.length >= 3 || detectionStatus !== 'idle') {
+      return;
+    }
+
+    let active = true;
+
+    const runDetection = async () => {
+      setDetectionStatus('loading');
+
+      const landmarks = await detectPoseLandmarks(imageUri);
+      if (!active) {
+        return;
+      }
+
+      const leftShoulder = landmarks[11] ?? landmarks[3];
+      const rightShoulder = landmarks[12] ?? landmarks[4];
+      const nose = landmarks[0];
+
+      if (leftShoulder && rightShoulder && nose) {
+        setPoints([
+          { x: leftShoulder.x * imageSize.width, y: leftShoulder.y * imageSize.height },
+          { x: rightShoulder.x * imageSize.width, y: rightShoulder.y * imageSize.height },
+          {
+            x: ((leftShoulder.x + rightShoulder.x) / 2) * imageSize.width,
+            y: ((nose.y + leftShoulder.y + rightShoulder.y) / 3) * imageSize.height
+          }
+        ]);
+      }
+
+      setDetectionStatus('done');
+    };
+
+    runDetection();
+
+    return () => {
+      active = false;
+    };
+  }, [detectionStatus, imageSize.height, imageSize.width, imageUri, points.length]);
 
   const scoreColor = !result ? '#94a3b8' : result.score >= 80 ? '#22c55e' : '#ef4444';
 
@@ -60,6 +103,11 @@ export default function ResultScreen({ route }: Props) {
         {points.length < 3
           ? `Next point: ${POINT_LABELS[points.length]}`
           : 'All keypoints selected. You can reset and re-tap if needed.'}
+      </Text>
+      <Text style={styles.autoText}>
+        {detectionStatus === 'loading'
+          ? 'Detecting pose with MediaPipe...'
+          : 'Auto-detection is enabled. Tap manually to fine-tune points if needed.'}
       </Text>
 
       <Pressable style={styles.imageWrap} onLayout={onImageLayout} onPress={onImageTap}>
@@ -96,10 +144,10 @@ export default function ResultScreen({ route }: Props) {
         <Text style={[styles.scoreValue, { color: scoreColor }]}>{result ? result.score : '--'}</Text>
 
         <Text style={styles.metrics}>
-          Neck angle: {result ? `${result.neckAngle}°` : 'Select keypoints first'}
+          Neck angle: {result ? `${result.details.neckAngle}°` : 'Select keypoints first'}
         </Text>
         <Text style={styles.metrics}>
-          Shoulder difference: {result ? `${result.shoulderDifference}°` : 'Select keypoints first'}
+          Shoulder difference: {result ? `${result.details.shoulderDiff}°` : 'Select keypoints first'}
         </Text>
 
         <Text style={styles.issuesTitle}>Findings</Text>
@@ -134,6 +182,11 @@ const styles = StyleSheet.create({
   instructionText: {
     color: '#cbd5e1',
     alignSelf: 'flex-start'
+  },
+  autoText: {
+    color: '#94a3b8',
+    alignSelf: 'flex-start',
+    fontSize: 12
   },
   imageWrap: {
     width: '100%',
