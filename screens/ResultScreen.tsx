@@ -9,13 +9,24 @@ import {
   View
 } from 'react-native';
 import { StackScreenProps } from '@react-navigation/stack';
+import Svg, { Circle, Line } from 'react-native-svg';
 import { RootStackParamList } from '../navigation';
-import { analyzePosture, BodyKeypoints, Keypoint } from '../utils/postureAnalysis';
+import { analyzePosture, Keypoint } from '../utils/postureAnalysis';
 import { detectPoseLandmarks } from '../utils/poseDetection';
 
 type Props = StackScreenProps<RootStackParamList, 'Result'>;
 
 const POINT_LABELS = ['Left shoulder', 'Right shoulder', 'Neck'] as const;
+const GOOD_COLOR = '#22c55e';
+const BAD_COLOR = '#ef4444';
+const NEUTRAL_COLOR = '#94a3b8';
+
+type Connection = {
+  from: Keypoint;
+  to: Keypoint;
+  color: string;
+  width: number;
+};
 
 export default function ResultScreen({ route }: Props) {
   const { imageUri } = route.params;
@@ -95,6 +106,54 @@ export default function ResultScreen({ route }: Props) {
   }, [detectionStatus, imageSize.height, imageSize.width, imageUri, points.length]);
 
   const scoreColor = !result ? '#94a3b8' : result.score >= 80 ? '#22c55e' : '#ef4444';
+  const leftShoulder = points[0];
+  const rightShoulder = points[1];
+  const neck = points[2];
+  const shoulderMidpoint =
+    leftShoulder && rightShoulder
+      ? {
+          x: (leftShoulder.x + rightShoulder.x) / 2,
+          y: (leftShoulder.y + rightShoulder.y) / 2
+        }
+      : null;
+
+  const overlayData = useMemo(() => {
+    if (!leftShoulder || !rightShoulder || !neck || !shoulderMidpoint) {
+      return { connections: [] as Connection[], neckGood: true, shouldersGood: true };
+    }
+
+    const neckGood = (result?.details.neckAngle ?? 0) <= 10;
+    const shouldersGood = (result?.details.shoulderDiff ?? 0) <= 7;
+
+    const connections: Connection[] = [
+      {
+        from: leftShoulder,
+        to: rightShoulder,
+        color: shouldersGood ? GOOD_COLOR : BAD_COLOR,
+        width: 4
+      },
+      {
+        from: neck,
+        to: shoulderMidpoint,
+        color: neckGood ? GOOD_COLOR : BAD_COLOR,
+        width: 4
+      },
+      {
+        from: neck,
+        to: leftShoulder,
+        color: neckGood && shouldersGood ? GOOD_COLOR : NEUTRAL_COLOR,
+        width: 2
+      },
+      {
+        from: neck,
+        to: rightShoulder,
+        color: neckGood && shouldersGood ? GOOD_COLOR : NEUTRAL_COLOR,
+        width: 2
+      }
+    ];
+
+    return { connections, neckGood, shouldersGood };
+  }, [leftShoulder, neck, result?.details.neckAngle, result?.details.shoulderDiff, rightShoulder, shoulderMidpoint]);
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
@@ -113,11 +172,40 @@ export default function ResultScreen({ route }: Props) {
       <Pressable style={styles.imageWrap} onLayout={onImageLayout} onPress={onImageTap}>
         <Image source={{ uri: imageUri }} style={styles.preview} />
 
+        <Svg style={styles.svgOverlay} pointerEvents="none">
+          {overlayData.connections.map((connection, index) => (
+            <Line
+              key={`line-${index}-${connection.from.x}-${connection.to.x}`}
+              x1={connection.from.x}
+              y1={connection.from.y}
+              x2={connection.to.x}
+              y2={connection.to.y}
+              stroke={connection.color}
+              strokeWidth={connection.width}
+              strokeLinecap="round"
+            />
+          ))}
+        </Svg>
+
         {points.map((point, index) => (
-          <View
-            key={`${POINT_LABELS[index]}-${point.x}-${point.y}`}
-            style={[styles.marker, { left: point.x - 8, top: point.y - 8 }]}
-          />
+          <Svg key={`${POINT_LABELS[index]}-${point.x}-${point.y}`} style={styles.svgOverlay} pointerEvents="none">
+            <Circle
+              cx={point.x}
+              cy={point.y}
+              r={8}
+              fill={
+                index === 2
+                  ? overlayData.neckGood
+                    ? GOOD_COLOR
+                    : BAD_COLOR
+                  : overlayData.shouldersGood
+                    ? GOOD_COLOR
+                    : BAD_COLOR
+              }
+              stroke="#052e16"
+              strokeWidth={2}
+            />
+          </Svg>
         ))}
 
         {points.map((point, index) => (
@@ -202,14 +290,8 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%'
   },
-  marker: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    backgroundColor: '#22c55e',
-    borderWidth: 2,
-    borderColor: '#052e16',
-    position: 'absolute'
+  svgOverlay: {
+    ...StyleSheet.absoluteFillObject
   },
   markerLabel: {
     position: 'absolute',
