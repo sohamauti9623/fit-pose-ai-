@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  Alert,
   Image,
   LayoutChangeEvent,
   Pressable,
@@ -33,7 +34,7 @@ export default function ResultScreen({ route }: Props) {
   const { imageUri } = route.params;
   const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
   const [points, setPoints] = useState<Keypoint[]>([]);
-  const [detectionStatus, setDetectionStatus] = useState<'idle' | 'loading' | 'done'>('idle');
+  const [detectionStatus, setDetectionStatus] = useState<'idle' | 'loading' | 'done' | 'failed'>('idle');
 
   const result = useMemo(() => {
     if (points.length < 3) {
@@ -94,9 +95,11 @@ export default function ResultScreen({ route }: Props) {
             y: ((nose.y + leftShoulder.y + rightShoulder.y) / 3) * imageSize.height
           }
         ]);
+        setDetectionStatus('done');
+        return;
       }
 
-      setDetectionStatus('done');
+      setDetectionStatus('failed');
     };
 
     runDetection();
@@ -195,6 +198,13 @@ export default function ResultScreen({ route }: Props) {
     }
   };
 
+  const handleImprovePosture = () => {
+    Alert.alert(
+      'Posture Improvement Tips',
+      '1) Keep your ears over your shoulders.\n2) Relax and level both shoulders.\n3) Engage your core for upright alignment.\n4) Re-scan after adjusting your stance.'
+    );
+  };
+
   return (
     <ScrollView contentContainerStyle={styles.container}>
       <Text style={styles.headline}>Posture Insight</Text>
@@ -270,7 +280,12 @@ export default function ResultScreen({ route }: Props) {
       <View style={styles.feedbackCard}>
         <Text style={styles.feedbackTitle}>Alignment Feedback</Text>
         {detectionStatus === 'loading' && <Text style={styles.autoText}>Detecting pose with MediaPipe…</Text>}
-        {!result && detectionStatus !== 'loading' && (
+        {detectionStatus === 'failed' && (
+          <Text style={styles.autoText}>
+            Auto-detection unavailable on this device/runtime. Tap left shoulder, right shoulder, and neck to calibrate.
+          </Text>
+        )}
+        {!result && (detectionStatus === 'idle' || detectionStatus === 'done') && (
           <Text style={styles.autoText}>Tap left shoulder, right shoulder, and neck to calibrate overlay.</Text>
         )}
         {result?.issues.map((issue) => {
@@ -285,7 +300,7 @@ export default function ResultScreen({ route }: Props) {
       </View>
 
       <View style={styles.actions}>
-        <Pressable style={styles.primaryButton}>
+        <Pressable style={styles.primaryButton} onPress={handleImprovePosture}>
           <Text style={styles.primaryButtonText}>Improve My Posture</Text>
         </Pressable>
         <Pressable style={styles.secondaryButton} onPress={handleShareScore}>
