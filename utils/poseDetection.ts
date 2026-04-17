@@ -93,53 +93,15 @@ export async function loadPoseModel(): Promise<InstanceType<PoseConstructor> | n
   return poseLoaderPromise;
 }
 
-const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
-
-export function generateMockPoseLandmarks(seed = Date.now()): PoseLandmark[] {
-  const jitter = (offset: number) => {
-    const value = Math.sin(seed * 0.001 + offset) * 0.012;
-    return Number(value.toFixed(5));
-  };
-
-  const leftShoulderX = 0.42 + jitter(1);
-  const rightShoulderX = 0.58 + jitter(2);
-  const shoulderY = 0.46 + jitter(3);
-  const noseX = 0.5 + jitter(4);
-  const noseY = 0.3 + jitter(5);
-
-  const landmarks = Array.from({ length: 33 }, (_, index) => ({
-    x: clamp01(0.5 + jitter(index + 1)),
-    y: clamp01(0.5 + jitter(index + 2)),
-    z: -0.08 + jitter(index + 3),
-    visibility: 0.9
-  }));
-
-  landmarks[0] = { x: clamp01(noseX), y: clamp01(noseY), z: -0.12, visibility: 0.98 }; // nose
-  landmarks[11] = {
-    x: clamp01(leftShoulderX),
-    y: clamp01(shoulderY),
-    z: -0.22,
-    visibility: 0.99
-  }; // left shoulder
-  landmarks[12] = {
-    x: clamp01(rightShoulderX),
-    y: clamp01(shoulderY + jitter(10)),
-    z: -0.21,
-    visibility: 0.99
-  }; // right shoulder
-
-  return landmarks;
-}
-
 export async function detectPoseLandmarks(imageUri: string): Promise<PoseLandmark[]> {
   if (!imageUri) {
-    return generateMockPoseLandmarks();
+    return [];
   }
 
   const pose = await loadPoseModel();
 
   if (!pose || Platform.OS !== 'web' || !hasDom()) {
-    return generateMockPoseLandmarks();
+    return [];
   }
 
   try {
@@ -167,8 +129,8 @@ export async function detectPoseLandmarks(imageUri: string): Promise<PoseLandmar
       return landmarks;
     }
   } catch (error) {
-    console.warn('MediaPipe pose detection failed, falling back to mock data.', error);
+    console.warn('MediaPipe pose detection failed.', error);
   }
 
-  return generateMockPoseLandmarks();
+  return [];
 }
