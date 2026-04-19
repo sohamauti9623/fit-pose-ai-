@@ -13,12 +13,13 @@ import { StackScreenProps } from '@react-navigation/stack';
 import Svg, { Circle, Line } from 'react-native-svg';
 import { RootStackParamList } from '../navigation';
 import { analyzePosture, Keypoint } from '../utils/postureAnalysis';
-import { detectPoseLandmarks } from '../utils/poseDetection';
+import { detectPoseLandmarks, PoseLandmark } from '../utils/poseDetection';
 
 type Props = StackScreenProps<RootStackParamList, 'Result'>;
 
 const POINT_LABELS = ['Left shoulder', 'Right shoulder', 'Neck'] as const;
 const GOOD_COLOR = '#22c55e';
+const WARN_COLOR = '#f59e0b';
 const BAD_COLOR = '#ef4444';
 const NEUTRAL_COLOR = '#94a3b8';
 
@@ -33,9 +34,14 @@ export default function ResultScreen({ route }: Props) {
   const { imageUri } = route.params;
   const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
   const [points, setPoints] = useState<Keypoint[]>([]);
+  const [landmarks, setLandmarks] = useState<PoseLandmark[]>([]);
   const [detectionStatus, setDetectionStatus] = useState<'idle' | 'loading' | 'done'>('idle');
 
   const result = useMemo(() => {
+    if (landmarks.length > 0) {
+      return analyzePosture(landmarks);
+    }
+
     if (points.length < 3) {
       return null;
     }
@@ -45,7 +51,7 @@ export default function ResultScreen({ route }: Props) {
       rightShoulder: points[1],
       neck: points[2]
     });
-  }, [points]);
+  }, [landmarks, points]);
 
   const onImageLayout = (event: LayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout;
@@ -53,7 +59,7 @@ export default function ResultScreen({ route }: Props) {
   };
 
   const onImageTap = (event: { nativeEvent: { locationX: number; locationY: number } }) => {
-    if (points.length >= 3) {
+    if (landmarks.length > 0 || points.length >= 3) {
       return;
     }
 
@@ -63,11 +69,12 @@ export default function ResultScreen({ route }: Props) {
 
   const resetPoints = () => {
     setPoints([]);
+    setLandmarks([]);
     setDetectionStatus('idle');
   };
 
   useEffect(() => {
-    if (!imageSize.width || !imageSize.height || points.length >= 3 || detectionStatus !== 'idle') {
+    if (!imageSize.width || !imageSize.height || detectionStatus !== 'idle') {
       return;
     }
 
@@ -76,24 +83,28 @@ export default function ResultScreen({ route }: Props) {
     const runDetection = async () => {
       setDetectionStatus('loading');
 
-      const landmarks = await detectPoseLandmarks(imageUri);
+      const nextLandmarks = await detectPoseLandmarks(imageUri);
       if (!active) {
         return;
       }
 
-      const leftShoulder = landmarks[11] ?? landmarks[3];
-      const rightShoulder = landmarks[12] ?? landmarks[4];
-      const nose = landmarks[0];
+      if (nextLandmarks.length > 0) {
+        setLandmarks(nextLandmarks);
 
-      if (leftShoulder && rightShoulder && nose) {
-        setPoints([
-          { x: leftShoulder.x * imageSize.width, y: leftShoulder.y * imageSize.height },
-          { x: rightShoulder.x * imageSize.width, y: rightShoulder.y * imageSize.height },
-          {
-            x: ((leftShoulder.x + rightShoulder.x) / 2) * imageSize.width,
-            y: ((nose.y + leftShoulder.y + rightShoulder.y) / 3) * imageSize.height
-          }
-        ]);
+        const leftShoulder = nextLandmarks[11] ?? nextLandmarks[3];
+        const rightShoulder = nextLandmarks[12] ?? nextLandmarks[4];
+        const nose = nextLandmarks[0];
+
+        if (leftShoulder && rightShoulder && nose) {
+          setPoints([
+            { x: leftShoulder.x * imageSize.width, y: leftShoulder.y * imageSize.height },
+            { x: rightShoulder.x * imageSize.width, y: rightShoulder.y * imageSize.height },
+            {
+              x: nose.x * imageSize.width,
+              y: nose.y * imageSize.height
+            }
+          ]);
+        }
       }
 
       setDetectionStatus('done');
@@ -104,9 +115,9 @@ export default function ResultScreen({ route }: Props) {
     return () => {
       active = false;
     };
-  }, [detectionStatus, imageSize.height, imageSize.width, imageUri, points.length]);
+  }, [detectionStatus, imageSize.height, imageSize.width, imageUri]);
 
-  const scoreColor = !result ? '#94a3b8' : result.score >= 80 ? '#22c55e' : '#ef4444';
+  const scoreColor = !result ? NEUTRAL_COLOR : result.score >= 85 ? GOOD_COLOR : result.score >= 65 ? WARN_COLOR : BAD_COLOR;
   const leftShoulder = points[0];
   const rightShoulder = points[1];
   const neck = points[2];
@@ -120,11 +131,12 @@ export default function ResultScreen({ route }: Props) {
 
   const overlayData = useMemo(() => {
     if (!leftShoulder || !rightShoulder || !neck || !shoulderMidpoint) {
-      return { connections: [] as Connection[], neckGood: true, shouldersGood: true };
+      return { connections: [] as Connection[], neckGood: true, shouldersGood: true, torsoGood: true };
     }
 
-    const neckGood = (result?.details.neckAngle ?? 0) <= 10;
-    const shouldersGood = (result?.details.shoulderDiff ?? 0) <= 7;
+    const neckGood = (result?.details.neckAngle ?? 0) <= 8;
+    const shouldersGood = (result?.details.shoulderDiff ?? 0) <= 6;
+    const torsoGood = (result?.details.torsoTilt ?? 0) <= 5;
 
     const connections: Connection[] = [
       {
@@ -142,27 +154,33 @@ export default function ResultScreen({ route }: Props) {
       {
         from: neck,
         to: leftShoulder,
-        color: neckGood && shouldersGood ? GOOD_COLOR : NEUTRAL_COLOR,
+        color: torsoGood ? GOOD_COLOR : NEUTRAL_COLOR,
         width: 2
       },
       {
         from: neck,
         to: rightShoulder,
-        color: neckGood && shouldersGood ? GOOD_COLOR : NEUTRAL_COLOR,
+        color: torsoGood ? GOOD_COLOR : NEUTRAL_COLOR,
         width: 2
       }
     ];
 
-    return { connections, neckGood, shouldersGood };
-  }, [leftShoulder, neck, result?.details.neckAngle, result?.details.shoulderDiff, rightShoulder, shoulderMidpoint]);
+    return { connections, neckGood, shouldersGood, torsoGood };
+  }, [leftShoulder, neck, result?.details.neckAngle, result?.details.shoulderDiff, result?.details.torsoTilt, rightShoulder, shoulderMidpoint]);
 
   const postureLossInches = useMemo(() => {
     if (!result) {
       return 1.8;
     }
 
-    const estimatedLoss = 0.6 + result.details.neckAngle * 0.07 + result.details.shoulderDiff * 0.05;
-    return Number(Math.max(0.5, Math.min(3.5, estimatedLoss)).toFixed(1));
+    const estimatedLoss =
+      0.4 +
+      result.details.neckAngle * 0.05 +
+      result.details.shoulderDiff * 0.04 +
+      result.details.torsoTilt * 0.06 +
+      result.details.headOffsetPercent * 0.015;
+
+    return Number(Math.max(0.3, Math.min(4.2, estimatedLoss)).toFixed(1));
   }, [result]);
 
   const psychologicalFeedback = useMemo(() => {
@@ -170,15 +188,15 @@ export default function ResultScreen({ route }: Props) {
       return 'Stand tall to unlock a stronger, more confident look.';
     }
 
-    if (result.score > 85) {
-      return 'Excellent posture. You look confident and strong.';
+    if (result.score > 88) {
+      return 'Excellent posture. Your alignment looks strong and balanced.';
     }
 
-    if (result.score >= 60) {
-      return 'Decent posture, but improvements can boost your appearance.';
+    if (result.score >= 70) {
+      return 'Solid posture foundation. Small adjustments will improve symmetry.';
     }
 
-    return 'Your posture is affecting how you look. Fixing it will make a big difference.';
+    return 'Your posture is reducing presence. Correcting tilt and balance will help a lot.';
   }, [result]);
 
   const handleShareScore = async () => {
@@ -198,7 +216,7 @@ export default function ResultScreen({ route }: Props) {
   return (
     <ScrollView contentContainerStyle={styles.container}>
       <Text style={styles.headline}>Posture Insight</Text>
-      <Text style={styles.subheadline}>AI-powered body alignment analysis</Text>
+      <Text style={styles.subheadline}>Multi-point AI body alignment analysis</Text>
 
       <Pressable style={styles.imageWrap} onLayout={onImageLayout} onPress={onImageTap}>
         <Image source={{ uri: imageUri }} style={styles.preview} />
@@ -252,32 +270,53 @@ export default function ResultScreen({ route }: Props) {
       <View style={styles.scoreCard}>
         <Text style={styles.scoreLabel}>POSTURE SCORE</Text>
         <Text style={[styles.scoreValue, { color: scoreColor }]}>{result ? `${result.score} / 100` : '-- / 100'}</Text>
-        <Text style={styles.lossText}>You look {postureLossInches} inches shorter due to posture</Text>
+        <Text style={styles.lossText}>Estimated height loss: {postureLossInches} in</Text>
         <Text style={styles.confidenceText}>{psychologicalFeedback}</Text>
 
         <View style={styles.metricsRow}>
           <View style={styles.metricPill}>
-            <Text style={styles.metricLabel}>Neck</Text>
+            <Text style={styles.metricLabel}>Neck tilt</Text>
             <Text style={styles.metricValue}>{result ? `${result.details.neckAngle}°` : '--'}</Text>
           </View>
           <View style={styles.metricPill}>
             <Text style={styles.metricLabel}>Shoulders</Text>
             <Text style={styles.metricValue}>{result ? `${result.details.shoulderDiff}°` : '--'}</Text>
           </View>
+          <View style={styles.metricPill}>
+            <Text style={styles.metricLabel}>Torso tilt</Text>
+            <Text style={styles.metricValue}>{result ? `${result.details.torsoTilt}°` : '--'}</Text>
+          </View>
         </View>
+      </View>
+
+      <View style={styles.analysisCard}>
+        <Text style={styles.feedbackTitle}>Detailed Analysis Points</Text>
+        {result?.metrics.map((metric) => {
+          const color = metric.value <= metric.goodThreshold ? GOOD_COLOR : metric.value <= metric.warningThreshold ? WARN_COLOR : BAD_COLOR;
+          const unit = metric.unit === 'deg' ? '°' : '%';
+          return (
+            <View key={metric.id} style={styles.analysisRow}>
+              <Text style={styles.analysisLabel}>{metric.label}</Text>
+              <Text style={[styles.analysisValue, { color }]}>
+                {metric.value}
+                {unit}
+              </Text>
+            </View>
+          );
+        })}
       </View>
 
       <View style={styles.feedbackCard}>
         <Text style={styles.feedbackTitle}>Alignment Feedback</Text>
-        {detectionStatus === 'loading' && <Text style={styles.autoText}>Detecting pose with MediaPipe…</Text>}
+        {detectionStatus === 'loading' && <Text style={styles.autoText}>Detecting pose points with MediaPipe…</Text>}
         {!result && detectionStatus !== 'loading' && (
-          <Text style={styles.autoText}>Tap left shoulder, right shoulder, and neck to calibrate overlay.</Text>
+          <Text style={styles.autoText}>Tap left shoulder, right shoulder, and neck to calibrate overlay manually.</Text>
         )}
         {result?.issues.map((issue) => {
           const good = issue.toLowerCase().includes('great posture');
           return (
             <View key={issue} style={styles.issueRow}>
-              <View style={[styles.dot, { backgroundColor: good ? GOOD_COLOR : BAD_COLOR }]} />
+              <View style={[styles.dot, { backgroundColor: good ? GOOD_COLOR : WARN_COLOR }]} />
               <Text style={styles.issueText}>{issue}</Text>
             </View>
           );
@@ -307,16 +346,18 @@ export default function ResultScreen({ route }: Props) {
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: '#0b1220',
+    backgroundColor: '#020617',
     alignItems: 'center',
     padding: 20,
-    gap: 12
+    gap: 12,
+    paddingBottom: 28
   },
   headline: {
     color: '#f8fafc',
     fontWeight: '800',
-    fontSize: 22,
-    letterSpacing: 0.3
+    fontSize: 24,
+    letterSpacing: 0.2,
+    marginTop: 2
   },
   subheadline: {
     color: '#94a3b8',
@@ -374,16 +415,16 @@ const styles = StyleSheet.create({
   scoreCard: {
     width: '100%',
     maxWidth: 360,
-    backgroundColor: '#111827',
+    backgroundColor: '#0f172a',
     borderRadius: 18,
     paddingVertical: 20,
     paddingHorizontal: 18,
     alignItems: 'center',
     gap: 10,
     borderWidth: 1,
-    borderColor: '#1f2937',
+    borderColor: '#1e293b',
     shadowColor: '#000',
-    shadowOpacity: 0.45,
+    shadowOpacity: 0.3,
     shadowRadius: 14,
     shadowOffset: { width: 0, height: 10 }
   },
@@ -394,9 +435,9 @@ const styles = StyleSheet.create({
     fontWeight: '700'
   },
   scoreValue: {
-    fontSize: 62,
+    fontSize: 58,
     fontWeight: '900',
-    lineHeight: 68,
+    lineHeight: 64,
     textAlign: 'center'
   },
   lossText: {
@@ -406,23 +447,23 @@ const styles = StyleSheet.create({
     fontWeight: '600'
   },
   confidenceText: {
-    color: '#f87171',
+    color: '#cbd5e1',
     fontSize: 14,
     textAlign: 'center'
   },
   metricsRow: {
     width: '100%',
     flexDirection: 'row',
-    gap: 10,
+    gap: 8,
     marginTop: 4
   },
   metricPill: {
     flex: 1,
-    backgroundColor: '#0b1220',
+    backgroundColor: '#020617',
     borderColor: '#1f2937',
     borderWidth: 1,
     borderRadius: 12,
-    padding: 10,
+    paddingVertical: 10,
     alignItems: 'center'
   },
   metricLabel: {
@@ -431,8 +472,34 @@ const styles = StyleSheet.create({
   },
   metricValue: {
     color: '#f8fafc',
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '700'
+  },
+  analysisCard: {
+    width: '100%',
+    maxWidth: 360,
+    backgroundColor: '#0b1220',
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#1e293b',
+    gap: 8
+  },
+  analysisRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 5,
+    borderBottomWidth: 1,
+    borderBottomColor: '#172036'
+  },
+  analysisLabel: {
+    color: '#cbd5e1',
+    fontSize: 14
+  },
+  analysisValue: {
+    fontWeight: '800',
+    fontSize: 14
   },
   feedbackCard: {
     width: '100%',
